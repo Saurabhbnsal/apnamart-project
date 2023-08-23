@@ -13,6 +13,8 @@ from rest_framework.permissions import IsAuthenticated
 from subjects.models import SubjectModel
 from django.contrib.auth.models import User
 from django.db.models import Max
+from django.conf import settings
+from django.core.cache import cache
 
 class Marks(generics.GenericAPIView):
     serializer_class = MarkSerializer
@@ -24,28 +26,43 @@ class Marks(generics.GenericAPIView):
             return Response({"status": "success", "data": {"marks": serializer.data}}, status=status.HTTP_201_CREATED)
         else:
             return Response({"status": "fail", "message": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
-
+            
     def highest_marks_overall(self):
+        cache_key = 'highest_marks_overall'
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return cached_data
+
         highest_marks_overall =  MarksModel.objects.all().aggregate(max_marks=Max('marks'))['max_marks']
         highest_score_object = MarksModel.objects.filter(marks=highest_marks_overall)[:1].values('user_id', 'subject_id')[0]
         highest_scorer_user_id = highest_score_object['user_id']
         highest_scored_subject_name = SubjectModel.objects.values('name').get(id=highest_score_object['subject_id'])['name']
         highest_overall_user = User.objects.values('username').get(id=highest_scorer_user_id)
-        return {
+        results =  {
             "marks": highest_marks_overall,
             "user_name": highest_overall_user['username'],
-            "subject": highest_scored_subject_name
+            "subject": highest_scored_subject_name,
             }
+        cache.set(cache_key, results, 3600)
+        return results
 
     def highest_marks_in_subject(self, user_id, subject_id):
+        cache_key = 'highest_marks_in_subject_' + subject_id
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return cached_data
+        
         max_marks = MarksModel.objects.filter(subject_id=subject_id).aggregate(max_marks=Max('marks'))['max_marks']
         highest_score_object = MarksModel.objects.filter(marks=max_marks)[:1].values('user_id')[0]
         highest_scorer_user_id = highest_score_object['user_id']
         highest_score_user = User.objects.values('username').get(id=highest_scorer_user_id)
-        return {
+
+        data = {
             "marks": max_marks,
             "user_name": highest_score_user['username'],
         }
+        cache.set(cache_key, data, 3600)
+        return data
    
     def get(self, request):
         user_id = request.user.id
